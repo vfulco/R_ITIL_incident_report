@@ -1,0 +1,190 @@
+---
+title: 'FrontRange HEAT: Incident Data Analysis'
+theme: united
+output: pdf_document
+---
+
+
+
+```{r prelims, include=FALSE}
+  knitr::opts_chunk$set(cache=TRUE)
+  
+  library(ggplot2)
+  library(circlize)
+  library(chron)
+  library(dplyr)
+  
+  num_incidents_busy_team        <- 100
+  num_incidents_busy_person      <- 200
+  num_incidents_busy_customer    <- 20
+  
+  thedata <- read.table("ITH_Incidents_by_service_cause.csv",sep = ",",header = T,na.strings = c(""),fill = T,
+      col.names = c("Incident.ID", "Updated.By.Cust","Service","Category","Cause.Code","Status","Major.Incident","Priority","Customer","Customer.Email.Address","Location","VIP","Owner","Source","Team","Created.On","Modified.On","Last.Modified.By","Symptom","Inbound.email.address","First.Time.Fix"), 
+      colClasses = c("integer", "factor","factor",  "factor", "factor","factor",  "factor", "factor","factor",  "character", "factor","factor",  "factor", "factor","factor",  "character", "character","factor",  "character","character","factor")
+  )
+  
+  thedata$Created.On <- base::as.Date(thedata$Created.On, format = "%d/%m/%Y")
+  thedata$Modified.On<- base::as.Date(thedata$Modified.On, format = "%d/%m/%Y")
+  
+  thedata$Symptom[is.na(thedata$Symptom)] <- c("none")
+  thedata$Symptom  <- as.factor(thedata$Symptom)
+  
+  # hide names and other identifying data about this dataset
+  source("obfusticate.R")
+  
+tmp_category <- as.data.frame(levels(thedata$Category))
+names(tmp_category) <- "name"
+tmp_category$new_name <- paste("category",1:length(tmp_category$name))
+levels(thedata$Category)[match(tmp_category$name, levels(thedata$Category))] <- tmp_category$new_name
+
+tmp_team <- as.data.frame(levels(thedata$Team))
+names(tmp_team) <- "name"
+tmp_team$new_name <- paste("team",1:length(tmp_team$name))
+levels(thedata$Team)[match(tmp_team$name, levels(thedata$Team))] <- tmp_team$new_name
+
+tmp_owner <- as.data.frame(levels(thedata$Owner))
+names(tmp_owner) <- "name"
+tmp_owner$new_name <- paste("incident owner",1:length(tmp_owner$name))
+levels(thedata$Owner)[match(tmp_owner$name, levels(thedata$Owner))] <- tmp_owner$new_name
+
+tmp_customer <- as.data.frame(levels(thedata$Customer))
+names(tmp_customer) <- "name"
+tmp_customer$new_name <- paste("customer",1:length(tmp_customer$name))
+levels(thedata$Customer)[match(tmp_customer$name, levels(thedata$Customer))] <- tmp_customer$new_name
+
+thedata$Customer.Email.Address <- "person@provider.com"
+thedata$Inbound.email.address[is.na(thedata$Inbound.email.address) == F] <- "person@provider.com"
+  
+  print(head(thedata))
+## remove spam
+  thedata_nospam <- thedata[thedata$Cause.Code != "Spam" & is.weekend(thedata$Created.On) == F & thedata$Created.On != c("2015-04-17","2015-07-07"), ]
+  
+  dnss_team            <- data.frame(table(thedata_nospam$Created.On, thedata_nospam$Team))
+  names(dnss_team)     <- c("Created.On","Team","fqcy")
+  dnss_team$Created.On <- as.Date(dnss_team$Created.On, format = "%Y-%m-%d")
+  dnss_team_activity   <- aggregate(dnss_team$fqcy, by = list(dnss_team$Team), "sum")
+  dnss_team_busy       <- dnss_team_activity[dnss_team_activity$x > num_incidents_busy_team, 1]
+  
+## calculate top requesters
+  requests <-    data.frame(table(thedata_nospam$Owner,thedata_nospam$Symptom, thedata_nospam$Created.On))
+  names(requests) <-  c("Owner","Symptom","Created.On","fqcy")
+  requests$Created.On <- as.Date(requests$Created.On, format = "%Y-%m-%d")
+  tmp <-   data.frame(table(thedata_nospam$Owner))
+  names(tmp) <-  c("Owner","fqcy")
+  top_requesters <- tmp[tmp$fqcy > num_incidents_busy_person, 1]
+  
+## calculate the correlation between Cause.Code and Symptom
+  causes <- data.frame(table(thedata_nospam$Symptom, thedata_nospam$Cause.Code))
+  names(causes) <- c("Symptom", "Cause.Code", "fqcy")
+  
+## calculate the customers with the most incidents
+  
+  top_customers <- top_n(data.frame(table(thedata_nospam$Customer,thedata_nospam$Customer.Email.Address)),num_incidents_busy_customer)
+  names(top_customers) <- c("Customer Name", "Customer Email", "Frequency")
+
+```
+
+
+
+Prepared by Will Hanrott from data generated on 7th July 2015. 
+
+Data includes all Incidents created in FrontRange HEAT between 17th April 2015 and 6th July 2015 (inclusive)
+
+## Which Symptoms Are Being Reported?
+
+The data has been filtered:
+
+* to remove Symptom = Spam
+* to remove data for weekends
+
+```{r symptoms, echo=FALSE}
+  
+  dnss_symptom <- data.frame(table(thedata_nospam$Created.On, thedata_nospam$Symptom))
+  names(dnss_symptom) <- c("Created.On","Symptom","fqcy")
+  dnss_symptom$Created.On <- as.Date(dnss_symptom$Created.On, format = "%Y-%m-%d")
+  
+```
+
+The data has been grouped by day and by Symptom.
+
+```{r by_symptoms, dev = "png", fig.show = "hold", fig.width = 8, fig.height = 5, echo=FALSE}
+  
+  ps <- ggplot(dnss_symptom, aes(Created.On, fqcy)) + geom_line() + facet_wrap(~Symptom, ncol = 2)
+  print(ps + labs(x = "Date Created (excludes Weekends)", y = "Number of Incidents per day", main = "HEAT Incidents per day by Symptom"))
+```
+
+## Which Teams are Logging Incidents?
+
+The data has been filtered:
+
+* to remove Symptom = Spam
+* to remove data for weekends
+* to include Teams which have logged greater than `r num_incidents_busy_team` incidents
+
+Please note that the scales on the 'y' axis are different to the panels above. The 'x' axis scales are the same.
+
+```{r by_team, dev = "png", fig.show = "hold", fig.width = 8, fig.height = 10, echo=FALSE}
+
+r <- ggplot(dnss_team[dnss_team$Team %in% dnss_team_busy,], aes(Created.On, fqcy)) + geom_line() + facet_wrap(~Team, ncol = 2)
+print(r + labs(x = "Date Created (excludes weekends)", y = "Number of Incidents per day"))
+```
+
+## Who are the top incident Owners and what are the Symptoms?
+
+The data has been filtered:
+
+* to remove Symptom = Spam
+* to remove data for weekends
+* to include Owners who have logged at least `r num_incidents_busy_person` incidents
+
+```{r by_person, dev = "png", fig.width=8, fig.height=14, echo=FALSE}
+
+s <- ggplot(requests[requests$Owner %in% top_requesters, ], aes(Created.On, fqcy, colour = Symptom)) + geom_line() + facet_wrap(~Owner, ncol = 2) + scale_fill_brewer(palette = "Accent")
+print(s + labs(x = "Date Created (excludes weekends)", y = "Number of Incidents per day"))
+```
+
+## Which Symptoms and Causes are most strongly correlated?
+
+The data has been filtered:
+
+* to remove Symptom = Spam
+* to remove data for weekends
+
+NB: The size is the log2 of the total number of incidents for each point.
+
+```{r by_cause, dev="png", fig.width=8, fig.height=7, echo=FALSE}
+# head(causes)
+# max(causes$fqcy)
+t <- ggplot(causes, aes(Symptom,Cause.Code)) + geom_point(size = log10(causes$fqcy))
+print(t)
+```
+
+Here is the same data as a Chord Diagram: (this did work but I removed it after an update broke the plot)
+
+```{r by_cause_chord, dev="png", fig.width=8, fig.height=8, echo=FALSE}
+
+tab <- as.data.frame(table(thedata_nospam$Symptom, thedata_nospam$Cause.Code))
+# chordDiagramf(tab, annotationTrack = "grid", preAllocateTracks = list(track.height = 0.3))
+# # we go back to the first track and customize sector labels
+# circos.trackPlotRegion(track.index = 1, panel.fun = function(x, y) {
+#   xlim = get.cell.meta.data("xlim")
+#   ylim = get.cell.meta.data("ylim")
+#   sector.name = get.cell.meta.data("sector.index")
+#   circos.text(mean(xlim), ylim[1], sector.name, facing = "clockwise",
+#               niceFacing = TRUE, adj = c(0, 0.5))
+# }, bg.border = NA)
+
+```
+
+## Which are the Customers with the highest number of incidents?
+
+The data has been filtered:
+
+* to remove Symptom = Spam
+* to remove data for weekends
+
+```{r top_customers, dev="png", echo=FALSE}
+
+knitr::kable(top_customers)
+
+```
