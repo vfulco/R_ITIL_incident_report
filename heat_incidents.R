@@ -1,10 +1,9 @@
 #library(dplyr)
+
 library(ggplot2)
 library(chron)
 library(RColorBrewer)
-# library(openxlsx)
-# 
-# test <- read.xlsx("ITH - Incidents by service cause.xlsx")
+
 thedata <- read.table("ITH_Incidents_by_service_cause.csv",
                       sep = ",",
                       header = T,
